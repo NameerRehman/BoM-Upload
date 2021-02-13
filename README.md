@@ -1,3 +1,3 @@
 # BoM-Upload
 
-![upload tool](./docs/upload_tool.png)
+![upload tool](./BoM_Upload_docs/upload_tool.png)
