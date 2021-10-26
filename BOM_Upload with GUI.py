@@ -2,6 +2,9 @@
 from tkinter import *
 import tkinter as tk, pandas as pd
 import tkinter.messagebox, tkinter.filedialog, xmlrpc.client, glob, os
+import ssl
+from datetime import datetime
+import traceback
 
 class mainWindow():
 
@@ -96,26 +99,27 @@ class mainWindow():
 
     # Read BOM and sanitize BOM fields (remove indentation and null values)
     def readBOM(self, filename):
-        BOM = pd.read_csv(filename, encoding='unicode_escape')
-        BOM['Level'] = BOM['Level'].astype(str)
-        #BOM['Level Computed'] = BOM['Level'].str.count("\\.")
+        BOM = pd.read_csv(filename, encoding='unicode_escape',dtype={'Level': str, 'REVISION': str})
+        #BOM['Level'] = BOM['Level'].astype(str)
 
         BOM['PART NUMBER'] = BOM['PART NUMBER'].str.strip()
         BOM['REVISION'].fillna('0', inplace=True)
         BOM.fillna('', inplace=True)
-        BOM['REVISION'] = BOM['REVISION'].astype(str)
+        #BOM['REVISION'] = BOM['REVISION'].astype(str)
         BOM['QTY.'] = BOM['QTY.'].astype(int)
 
         return BOM
 
     def findParentAssy(self, BOM, i):
         level = BOM['Level'][i]
+        
         parent = {}
 
         # if level value has no periods, assign top level assembly as the parent assembly
         if (level.count('.') == 0):
             parent['assynumber'] = toplvl_assy
             parent['rev'] = toplvl_rev
+            
 
         # else, retrieve level of parent assy (ex: 1.2.3 -> 1.2)
         else:
@@ -172,12 +176,12 @@ class mainWindow():
             if len(prod_id) == 0:
                 try:
                     self.createProduct(uid,eng_code,rev,desc,material,length,finish,finspec,vendor,vendorno,spareclass,subclass)
-                    consoleList.insert(END, eng_code + ': Component created.')
+                    #consoleList.insert(END, eng_code + ': Component created.')
                 except:
                     # if exception, try to edit product instead
                     try:
                         self.editProduct(uid, prod_id, desc, material, length, finish, finspec, vendor, vendorno, spareclass, subclass)
-                        consoleList.insert(END, eng_code + ': Component updated after failing to create.')
+                        #consoleList.insert(END, eng_code + ': Component updated after failing to create.')
                     except:
                         print('Update failed.')
                         consoleList.insert(END, 'ERROR: Update failed when trying to update ' + eng_code + '!')
@@ -186,7 +190,7 @@ class mainWindow():
             else:
                 try:
                     self.editProduct(uid, prod_id, desc, material, length, finish, finspec, vendor, vendorno, spareclass, subclass)
-                    consoleList.insert(END, eng_code + ': Component updated.')
+                    #consoleList.insert(END, eng_code + ': Component updated.')
                 except:
                     consoleList.insert(END, 'ERROR: Update failed when trying to update ' + eng_code + '!')
 
@@ -196,7 +200,7 @@ class mainWindow():
                 parent_assy = self.findParentAssy(BOM, i)['assynumber']
                 parent_assy_rev = self.findParentAssy(BOM, i)['rev']
 
-                # Check for recursive references
+                # Check for recursive references (Part and parent assy have same number)
                 if parent_assy and parent_assy != eng_code:
                     parent_assy_id = self.searchProduct(uid, parent_assy, parent_assy_rev)
                     parent_bom = self.searchLatestBOM(uid, parent_assy_id)
@@ -207,7 +211,7 @@ class mainWindow():
                         if parent_bom['id'] not in editedBOMlist:
                             self.deleteBOMLine(uid, parent_bom['id'])
                         self.editBOMLine(uid, [parent_bom['id']], eng_code, rev, qty)
-                        consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
                     # Scenario 2: Parent BOM exists, create new BOM revision
                     elif parent_bom['id'] and create_new_BOM_revision.get() == 1:
                         if parent_bom['id'] not in self.editedBOMlist:
@@ -217,14 +221,14 @@ class mainWindow():
                             parent_bom['rev']+=1
                             parent_bom_id = [self.createBOM(uid, parent_assy_id[0], parent_bom['rev'])]
                         self.editBOMLine(uid, parent_bom_id, eng_code, rev, qty)
-                        consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
                     # Scenario 3: Parent BOM does not exist, create new BOM revision
                     else:
                         parent_bom_id = [self.createBOM(uid, parent_assy_id[0], parent_bom['rev'])]
                         self.editBOMLine(uid, parent_bom_id, eng_code, rev, qty)
-                        consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
 
-        consoleList.insert(END, 'Upload completed.')
+        consoleList.insert(END, 'Upload of ' + toplvl_assy + ' completed. ')
 
     def searchProduct(self, uid, eng_code, rev):
         prod_id = models.execute_kw(db, uid, password, 'product.template', 'search',
@@ -241,7 +245,7 @@ class mainWindow():
 
     def editProduct(self, uid, prod_id, desc, material, length, finish, finspec, vendor, vendorno, spareclass, subclass):
         models.execute_kw(db, uid, password, 'product.template', 'write',
-                          [prod_id, {'name': desc, 'engineering_material': material, 'profile_spec': length, 'engineering_surface': finish,
+                          [prod_id, {'engineering_material': material, 'profile_spec': length, 'engineering_surface': finish,
                                      'surface_spec': finspec, 'vendor_name': vendor, 'vendor_prod_code': vendorno,
                                      'spare_class': spareclass, 'substituion_class': subclass}])
 
@@ -296,9 +300,15 @@ class mainWindow():
             models.execute_kw(db, uid, password, 'mrp.bom.line', 'write',
                               [bom_line_id, {'product_qty': qty}])
         else:
-            models.execute_kw(db, uid, password, 'mrp.bom.line', 'create',
-                              [{'product_id': int(product_product_id[0]), 'product_qty': qty,
-                                'bom_id': int(bom_id[0])}])
+            try:
+                models.execute_kw(db, uid, password, 'mrp.bom.line', 'create',
+                                  [{'product_id': int(product_product_id[0]), 'product_qty': qty,
+                                    'bom_id': int(bom_id[0])}])
+            except Exception as e:
+                with open('Import Log '+datetime.today().strftime('%m-%d-%Y')+'.txt','w') as f:
+                    f.write('\n')
+                    f.write(f'\n Couldnt create {eng_code}, {e}, {traceback.format_exc()}')                    
+                consoleList.insert(END, f'Couldnt create {eng_code}, {e}, {traceback.format_exc()}')
 
     def deleteBOMLine(self, uid, bom_id):
         bom_line_ids = models.execute_kw(db, uid, password, 'mrp.bom.line', 'search',
@@ -323,9 +333,9 @@ class mainWindow():
             self.PasswordEntry.config(state='disabled')
             try:
                 global common
-                common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))
+                common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url), use_datetime=True,context=ssl._create_unverified_context())
                 global models
-                models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
+                models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url), use_datetime=True,context=ssl._create_unverified_context())
                 global uid
                 uid = common.authenticate(db, username, password, {})
                 if uid:
