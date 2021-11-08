@@ -154,7 +154,6 @@ class mainWindow():
             # Clean revision notations of P items and items without revisions.
             if (eng_code[0]=='P' and eng_code[1].isdigit()):
                 rev = '0'
-                # BOM['REVISION'][i] = '0'
             else:
                 rev = BOM['REVISION'][i]
 
@@ -171,17 +170,20 @@ class mainWindow():
 
             # Check if product exists in Odoo.
             prod_id = self.searchProduct(uid, eng_code, rev)
-
+            #print(f'{eng_code}: {prod_id}')
+            #print(len(prod_id))
+            
             # Create products if it does not exist in DB
             if len(prod_id) == 0:
                 try:
                     self.createProduct(uid,eng_code,rev,desc,material,length,finish,finspec,vendor,vendorno,spareclass,subclass)
-                    #consoleList.insert(END, eng_code + ': Component created.')
-                except:
+                    print(f'{eng_code} Component created.')
+                except Exception as e:
+                    print(f'couldnt create part, {e} {traceback.format_exc()}')
                     # if exception, try to edit product instead
                     try:
                         self.editProduct(uid, prod_id, desc, material, length, finish, finspec, vendor, vendorno, spareclass, subclass)
-                        #consoleList.insert(END, eng_code + ': Component updated after failing to create.')
+                        print('Component updated after failing to create')
                     except:
                         print('Update failed.')
                         consoleList.insert(END, 'ERROR: Update failed when trying to update ' + eng_code + '!')
@@ -309,6 +311,7 @@ class mainWindow():
                     f.write('\n')
                     f.write(f'\n Couldnt create {eng_code}, {e}, {traceback.format_exc()}')                    
                 consoleList.insert(END, f'Couldnt create {eng_code}, {e}, {traceback.format_exc()}')
+                consoleList.insert(END, f'{product_product_id}')
 
     def deleteBOMLine(self, uid, bom_id):
         bom_line_ids = models.execute_kw(db, uid, password, 'mrp.bom.line', 'search',
