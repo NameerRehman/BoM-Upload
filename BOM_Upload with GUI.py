@@ -1,4 +1,5 @@
 
+
 from tkinter import *
 import tkinter as tk, pandas as pd
 import tkinter.messagebox, tkinter.filedialog, xmlrpc.client, glob, os
@@ -97,44 +98,75 @@ class mainWindow():
         self.UserEntry.config(state='normal')
         self.PasswordEntry.config(state='normal')
 
+    def flatBOM(self,BOM):
+        special_assy = BOM['PART NUMBER'].str.contains('W0', case=False)
+        
+        #Include only special assemblies or part level components in BOM (Excludes all non-special assemblies)
+        BOM = BOM[special_assy | (BOM['File Type']=='sldprt')]
+
+        #get list of levels of all special assy
+        self.special_assy_lvls = BOM[special_assy]['Level'].tolist()
+        
+        #change level of all parts that are not part of special assy to lowest level 
+        #BOM.loc[~BOM['Level'].str.contains('|'.join(special_assy_lvl)),['Level']] = '1'        
+
+        BOM = BOM.reset_index().drop(columns=['index'])
+        print(BOM)
+        #print(BOM)
+        #print(self.special_assy_lvls) 
+        return BOM
+
     # Read BOM and sanitize BOM fields (remove indentation and null values)
     def readBOM(self, filename):
         BOM = pd.read_csv(filename, encoding='unicode_escape',dtype={'Level': str, 'REVISION': str})
-        #BOM['Level'] = BOM['Level'].astype(str)
 
         BOM['PART NUMBER'] = BOM['PART NUMBER'].str.strip()
         BOM['REVISION'].fillna('0', inplace=True)
         BOM.fillna('', inplace=True)
-        #BOM['REVISION'] = BOM['REVISION'].astype(str)
         BOM['QTY.'] = BOM['QTY.'].astype(int)
+
+        #TODO: update to a checkbox on UI
+        import_flat = True
+        
+        #convert to flat parts only BOM
+        if import_flat:
+            BOM = self.flatBOM(BOM)
 
         return BOM
 
     def findParentAssy(self, BOM, i):
         level = BOM['Level'][i]
+        partnum = BOM['PART NUMBER'][i]
+        filetype = BOM['File Type'][i]
         
         parent = {}
 
-        # if level value has no periods, assign top level assembly as the parent assembly
-        if (level.count('.') == 0):
+        #split level by first occurence of "."
+        top_parent_lvl = level.split('.')[0]
+
+        # if level value has no periods, assign top level assembly as parent assembly
+        if (level.count('.') == 0 or top_parent_lvl not in self.special_assy_lvls):
             parent['assynumber'] = toplvl_assy
             parent['rev'] = toplvl_rev
             
-
         # else, retrieve level of parent assy (ex: 1.2.3 -> 1.2)
         else:
-            # split level value by the last occurence of "."
-            parent_lvl = level.rpartition('.')[0]
+            # split level by the last occurence of "."
+            immediate_parent_lvl = level.rpartition('.')[0]
+                
             try:
                 # get row containing parent assy
-                parentBOM = BOM.loc[BOM['Level'] == parent_lvl]
+                parentBOM = BOM.loc[BOM['Level'] == immediate_parent_lvl]
+
                 # get part number & rev
                 parent['assynumber'] = parentBOM.iloc[0, 1]
                 parent['rev'] = parentBOM.iloc[0, 2]
             except:
-                print('Issue finding parent level:', parent_lvl)
+                print('Issue finding parent level:', immediate_parent_lvl)
                 consoleList.insert(END, 'ERROR: Cannot locate Parent Level!')
-
+                
+        print(f'Parent: {parent}')
+              
         return parent
 
     def uploadBOM(self, BOM, uid):
@@ -145,8 +177,8 @@ class mainWindow():
         toplvl_assy_id = self.searchProduct(uid, toplvl_assy, toplvl_rev)
         if not toplvl_assy_id:
             self.createProduct(uid, toplvl_assy, toplvl_rev, toplvl_name, '', '', '', '', '', '','', '')
-
-        for i in range(BOM.shape[0]):
+        
+        for i in range(len(BOM)):
 
             eng_code = BOM['PART NUMBER'][i]
             print('Processing', eng_code)
@@ -196,16 +228,19 @@ class mainWindow():
                 except:
                     consoleList.insert(END, 'ERROR: Update failed when trying to update ' + eng_code + '!')
 
-            # Create Bill of Material.
+            # Create Bill of Material if upload parts only is NOT selected
             if not upload_parts_only.get():
 
-                parent_assy = self.findParentAssy(BOM, i)['assynumber']
-                parent_assy_rev = self.findParentAssy(BOM, i)['rev']
+                parent_assy_data = self.findParentAssy(BOM, i)
+                parent_assy = parent_assy_data['assynumber']
+                parent_assy_rev = parent_assy_data['rev']
 
                 # Check for recursive references (Part and parent assy have same number)
                 if parent_assy and parent_assy != eng_code:
                     parent_assy_id = self.searchProduct(uid, parent_assy, parent_assy_rev)
                     parent_bom = self.searchLatestBOM(uid, parent_assy_id)
+
+                    print(f'parent assy id: {parent_assy_id}, parent bom: {parent_bom}')
 
                     # Scenario 1: Parent BOM exists, update current BOM
                     if parent_bom['id'] and create_new_BOM_revision.get() != 1:
@@ -213,7 +248,7 @@ class mainWindow():
                         if parent_bom['id'] not in editedBOMlist:
                             self.deleteBOMLine(uid, parent_bom['id'])
                         self.editBOMLine(uid, [parent_bom['id']], eng_code, rev, qty)
-                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+ 
                     # Scenario 2: Parent BOM exists, create new BOM revision
                     elif parent_bom['id'] and create_new_BOM_revision.get() == 1:
                         if parent_bom['id'] not in self.editedBOMlist:
@@ -223,12 +258,12 @@ class mainWindow():
                             parent_bom['rev']+=1
                             parent_bom_id = [self.createBOM(uid, parent_assy_id[0], parent_bom['rev'])]
                         self.editBOMLine(uid, parent_bom_id, eng_code, rev, qty)
-                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+
                     # Scenario 3: Parent BOM does not exist, create new BOM revision
                     else:
                         parent_bom_id = [self.createBOM(uid, parent_assy_id[0], parent_bom['rev'])]
                         self.editBOMLine(uid, parent_bom_id, eng_code, rev, qty)
-                        #consoleList.insert(END, eng_code + ': Added to BOM of ' + parent_assy + '.')
+
 
         consoleList.insert(END, 'Upload of ' + toplvl_assy + ' completed. ')
 
