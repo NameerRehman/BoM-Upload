@@ -199,8 +199,9 @@ class mainWindow():
             # Create Bill of Material.
             if not upload_parts_only.get():
 
-                parent_assy = self.findParentAssy(BOM, i)['assynumber']
-                parent_assy_rev = self.findParentAssy(BOM, i)['rev']
+                parent_assy_data = self.findParentAssy(BOM, i)
+                parent_assy = parent_assy_data['assynumber']
+                parent_assy_rev = parent_assy_data['rev']
 
                 # Check for recursive references (Part and parent assy have same number)
                 if parent_assy and parent_assy != eng_code:
